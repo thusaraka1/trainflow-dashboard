@@ -1,15 +1,17 @@
 import { useState, useEffect } from 'react';
-import { Train, MapPin, Wifi, WifiOff, Activity } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Train } from 'lucide-react';
 import Header from '@/components/dashboard/Header';
-import StatCard from '@/components/dashboard/StatCard';
+
 import StationCard from '@/components/dashboard/StationCard';
 import TrainApproachCard from '@/components/dashboard/TrainApproachCard';
-import { mockStations, mockTrainApproaches, mockDashboardStats } from '@/data/mockData';
+import { mockStations, mockTrainApproaches } from '@/data/mockData';
 import { TrainApproach } from '@/types/train';
 
 const Index = () => {
+  const navigate = useNavigate();
   const [approaches, setApproaches] = useState(mockTrainApproaches);
-  const [stats, setStats] = useState(mockDashboardStats);
+
 
   // Simulate real-time updates
   useEffect(() => {
@@ -37,66 +39,58 @@ const Index = () => {
 
       <main className="max-w-7xl mx-auto px-6 py-8">
         {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
-          <StatCard
-            title="Total Stations"
-            value={stats.totalStations}
-            icon={<MapPin className="w-5 h-5" />}
-          />
-          <StatCard
-            title="Train Approaches"
-            value={stats.totalApproaches}
-            icon={<Train className="w-5 h-5" />}
-            subtitle="Last 24 hours"
-          />
-          <StatCard
-            title="Sensors Online"
-            value={stats.sensorsOnline}
-            icon={<Wifi className="w-5 h-5" />}
-            variant="success"
-          />
-          <StatCard
-            title="Sensors Offline"
-            value={stats.sensorsOffline}
-            icon={<WifiOff className="w-5 h-5" />}
-            variant="destructive"
-          />
-          <StatCard
-            title="Active Trains"
-            value={stats.activeTrains}
-            icon={<Activity className="w-5 h-5" />}
-            variant="warning"
-          />
-        </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          {/* Train Approaches Section */}
-          <div className="lg:col-span-2">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-foreground">Live Train Approaches</h2>
-              <span className="text-xs text-muted-foreground font-mono">
-                {activeApproaches.length} active
-              </span>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {approaches.map((approach) => (
-                <TrainApproachCard key={approach.id} approach={approach} />
-              ))}
-            </div>
-          </div>
 
-          {/* Stations Section */}
+        <div className="w-full">
+          {/* Train Lines Section */}
           <div>
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-foreground">Stations</h2>
+              <h2 className="text-lg font-semibold text-foreground">Train Lines</h2>
               <span className="text-xs text-muted-foreground font-mono">
-                {mockStations.length} total
+                {Array.from(new Set(mockStations.map(s => s.line))).filter(Boolean).length} lines
               </span>
             </div>
-            <div className="space-y-4">
-              {mockStations.map((station) => (
-                <StationCard key={station.id} station={station} />
-              ))}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {Array.from(new Set(mockStations.map(s => s.line))).filter(Boolean).map((line, index) => {
+                const stationCount = mockStations.filter(s => s.line === line).length;
+                const colorIndex = (index % 5) + 1;
+                const colorVar = `var(--color-${colorIndex})`;
+
+                return (
+                  <div
+                    key={line}
+                    onClick={() => navigate(`/line/${encodeURIComponent(line as string)}`)}
+                    className="glass rounded-xl p-6 border border-border/50 transition-all duration-300 cursor-pointer hover:shadow-lg group relative overflow-hidden"
+                    style={{
+                      '--card-color': `hsl(${colorVar})`,
+                      background: `linear-gradient(135deg, hsl(var(--card) / 0.9), hsl(${colorVar} / 0.1))`
+                    } as React.CSSProperties}
+                  >
+                    <div
+                      className="absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity duration-300"
+                      style={{ background: `linear-gradient(135deg, transparent, hsl(${colorVar}))` }}
+                    />
+
+                    <div className="flex items-center justify-between mb-4 relative z-10">
+                      <div
+                        className="p-3 rounded-lg transition-colors"
+                        style={{ backgroundColor: `hsl(${colorVar} / 0.1)` }}
+                      >
+                        {/* Train Icon */}
+                        <Train
+                          className="w-6 h-6"
+                          style={{ color: `hsl(${colorVar})` }}
+                        />
+                      </div>
+                      <span className="px-2 py-1 text-xs font-mono bg-secondary rounded-md text-muted-foreground">
+                        {stationCount} stations
+                      </span>
+                    </div>
+                    <h3 className="text-xl font-bold text-foreground mb-1 relative z-10">{line}</h3>
+                    <p className="text-sm text-muted-foreground relative z-10">Click to view stations</p>
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

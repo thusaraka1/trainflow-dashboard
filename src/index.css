@@ -1,8 +1,8 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
 @layer base {
   :root {
@@ -48,9 +48,15 @@
     --glow-destructive: 0 0 15px hsl(0 72% 51% / 0.4);
     --glow-warning: 0 0 15px hsl(38 92% 50% / 0.4);
 
-    --gradient-dark: linear-gradient(180deg, hsl(222 47% 8%) 0%, hsl(222 47% 4%) 100%);
-    --gradient-card: linear-gradient(135deg, hsl(222 47% 10%) 0%, hsl(222 47% 6%) 100%);
-    --gradient-accent: linear-gradient(135deg, hsl(187 92% 50%) 0%, hsl(187 80% 40%) 100%);
+    --gradient-dark: linear-gradient(180deg, hsl(230 40% 10%) 0%, hsl(222 47% 6%) 100%);
+    --gradient-card: linear-gradient(135deg, hsl(230 40% 12%) 0%, hsl(222 47% 8%) 100%);
+    --gradient-accent: linear-gradient(135deg, hsl(187 92% 50%) 0%, hsl(262 80% 50%) 100%);
+
+    --color-1: 187 92% 50%;
+    --color-2: 262 80% 50%;
+    --color-3: 320 80% 55%;
+    --color-4: 35 90% 55%;
+    --color-5: 142 70% 45%;
 
     --sidebar-background: 222 47% 6%;
     --sidebar-foreground: 210 40% 96%;
@@ -84,15 +90,15 @@
   .glow-primary {
     box-shadow: var(--glow-primary);
   }
-  
+
   .glow-success {
     box-shadow: var(--glow-success);
   }
-  
+
   .glow-destructive {
     box-shadow: var(--glow-destructive);
   }
-  
+
   .glow-warning {
     box-shadow: var(--glow-warning);
   }
@@ -111,18 +117,37 @@
   }
 
   @keyframes pulse-glow {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+
+    0%,
+    100% {
+      opacity: 1;
+    }
+
+    50% {
+      opacity: 0.5;
+    }
   }
 
   @keyframes slide-in {
-    from { transform: translateX(-10px); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
+    from {
+      transform: translateX(-10px);
+      opacity: 0;
+    }
+
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
   }
 
   @keyframes train-move {
-    0% { transform: translateX(-100%); }
-    100% { transform: translateX(100%); }
+    0% {
+      transform: translateX(-100%);
+    }
+
+    100% {
+      transform: translateX(100%);
+    }
   }
 
   .animate-pulse-glow {

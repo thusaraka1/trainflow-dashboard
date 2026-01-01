@@ -9,6 +9,8 @@ export interface Station {
   id: string;
   name: string;
   code: string;
+  province?: string;
+  line?: string;
   sensors: Sensor[];
   totalApproaches: number;
 }
@@ -20,7 +22,8 @@ export interface TrainApproach {
   stationName: string;
   sensorId: string;
   speed: number;
-  direction: 'northbound' | 'southbound' | 'eastbound' | 'westbound';
+  distance: number;
+  destination: string;
   timestamp: Date;
   status: 'approaching' | 'passed' | 'stopped';
 }
@@ -31,4 +34,12 @@ export interface DashboardStats {
   sensorsOnline: number;
   sensorsOffline: number;
   activeTrains: number;
+}
+
+export interface Log {
+  id: string;
+  timestamp: Date;
+  level: 'info' | 'warning' | 'error';
+  message: string;
+  source: string;
 }

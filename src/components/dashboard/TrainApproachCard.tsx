@@ -7,14 +7,7 @@ interface TrainApproachCardProps {
 }
 
 const TrainApproachCard = ({ approach }: TrainApproachCardProps) => {
-  const directionIcons = {
-    northbound: ArrowUp,
-    southbound: ArrowDown,
-    eastbound: ArrowRight,
-    westbound: ArrowLeft,
-  };
-
-  const DirectionIcon = directionIcons[approach.direction];
+  const DirectionIcon = Train;
 
   const statusStyles = {
     approaching: 'bg-warning/10 text-warning border-warning/30',
@@ -66,10 +59,10 @@ const TrainApproachCard = ({ approach }: TrainApproachCardProps) => {
 
       <div className="grid grid-cols-2 gap-4 mt-4">
         <div className="flex items-center gap-2">
-          <DirectionIcon className="w-4 h-4 text-primary" />
+          <ArrowRight className="w-4 h-4 text-primary" />
           <div>
-            <p className="text-xs text-muted-foreground">Direction</p>
-            <p className="text-sm font-medium capitalize">{approach.direction}</p>
+            <p className="text-xs text-muted-foreground">Destination</p>
+            <p className="text-sm font-medium capitalize">To {approach.destination}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -79,6 +72,19 @@ const TrainApproachCard = ({ approach }: TrainApproachCardProps) => {
             <p className={cn('text-sm font-bold font-mono', getSpeedColor(approach.speed))}>
               {approach.speed} km/h
             </p>
+          </div>
+        </div>
+
+        <div className="col-span-2 mt-2">
+          <div className="flex justify-between text-xs mb-1">
+            <span className="text-muted-foreground">Distance</span>
+            <span className="font-mono font-medium">{approach.distance.toFixed(1)} km</span>
+          </div>
+          <div className="h-1.5 bg-secondary rounded-full overflow-hidden">
+            <div
+              className="h-full bg-primary rounded-full transition-all duration-1000 ease-linear"
+              style={{ width: `${Math.max(0, Math.min(100, (1 - approach.distance / 20) * 100))}%` }}
+            />
           </div>
         </div>
       </div>

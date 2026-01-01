@@ -1,21 +1,45 @@
 import { Station } from '@/types/train';
 import { MapPin, Wifi, WifiOff } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
 interface StationCardProps {
   station: Station;
+  colorIndex?: number;
 }
 
-const StationCard = ({ station }: StationCardProps) => {
+const StationCard = ({ station, colorIndex = 1 }: StationCardProps) => {
   const onlineSensors = station.sensors.filter(s => s.status === 'online').length;
   const offlineSensors = station.sensors.filter(s => s.status === 'offline').length;
+  const navigate = useNavigate();
+
+  const colorVar = `var(--color-${colorIndex})`;
 
   return (
-    <div className="glass rounded-lg p-5 border border-border/50 hover:border-primary/30 transition-all duration-300 animate-slide-in">
-      <div className="flex items-start justify-between mb-4">
+    <div
+      id={`station-${station.id}`}
+      onClick={() => navigate(`/station/${station.id}`)}
+      className="glass rounded-lg p-5 border border-border/50 transition-all duration-300 animate-slide-in cursor-pointer hover:shadow-lg group relative overflow-hidden"
+      style={{
+        '--card-color': `hsl(${colorVar})`,
+        background: `linear-gradient(135deg, hsl(var(--card) / 0.9), hsl(${colorVar} / 0.1))`
+      } as React.CSSProperties}
+    >
+      <div
+        className="absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity duration-300"
+        style={{ background: `linear-gradient(135deg, transparent, hsl(${colorVar}))` }}
+      />
+
+      <div className="flex items-start justify-between mb-4 relative z-10">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-primary/10">
-            <MapPin className="w-5 h-5 text-primary" />
+          <div
+            className="p-2 rounded-lg transition-colors"
+            style={{ backgroundColor: `hsl(${colorVar} / 0.1)` }}
+          >
+            <MapPin
+              className="w-5 h-5"
+              style={{ color: `hsl(${colorVar})` }}
+            />
           </div>
           <div>
             <h3 className="font-semibold text-foreground">{station.name}</h3>
