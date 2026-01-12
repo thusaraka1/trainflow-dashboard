@@ -4,11 +4,13 @@ import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Train } from "lucide-react";
+import { Train, Loader2 } from "lucide-react";
 
 const Login = () => {
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
+    const [error, setError] = useState("");
+    const [isSubmitting, setIsSubmitting] = useState(false);
     const { login, isAuthenticated } = useAuth();
     const navigate = useNavigate();
 
@@ -18,13 +20,22 @@ const Login = () => {
         }
     }, [isAuthenticated, navigate]);
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        // Simple mock validation
+        setError("");
+        setIsSubmitting(true);
+
         if (username && password) {
-            login();
-            navigate("/");
+            const result = await login(username, password);
+
+            if (result.success) {
+                navigate("/");
+            } else {
+                setError(result.error || "Login failed. Please try again.");
+            }
         }
+
+        setIsSubmitting(false);
     };
 
     return (
@@ -41,12 +52,18 @@ const Login = () => {
                 </CardHeader>
                 <CardContent>
                     <form onSubmit={handleSubmit} className="space-y-4">
+                        {error && (
+                            <div className="p-3 text-sm text-red-500 bg-red-500/10 border border-red-500/20 rounded-md">
+                                {error}
+                            </div>
+                        )}
                         <div className="space-y-2">
                             <Input
                                 type="text"
                                 placeholder="Username"
                                 value={username}
                                 onChange={(e) => setUsername(e.target.value)}
+                                disabled={isSubmitting}
                                 required
                             />
                         </div>
@@ -56,11 +73,19 @@ const Login = () => {
                                 placeholder="Password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
+                                disabled={isSubmitting}
                                 required
                             />
                         </div>
-                        <Button type="submit" className="w-full">
-                            Sign In
+                        <Button type="submit" className="w-full" disabled={isSubmitting}>
+                            {isSubmitting ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Signing In...
+                                </>
+                            ) : (
+                                "Sign In"
+                            )}
                         </Button>
                     </form>
                 </CardContent>

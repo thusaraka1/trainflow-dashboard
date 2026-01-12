@@ -117,14 +117,13 @@
   }
 
   @keyframes pulse-glow {
-
     0%,
     100% {
-      opacity: 1;
+      box-shadow: 0 0 5px currentColor;
     }
 
     50% {
-      opacity: 0.5;
+      box-shadow: 0 0 15px currentColor;
     }
   }
 
