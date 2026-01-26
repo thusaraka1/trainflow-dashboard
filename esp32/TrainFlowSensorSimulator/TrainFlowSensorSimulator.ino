@@ -1,25 +1,38 @@
 /*
- * TrainFlow ESP32 Simulated Sensor Publisher
+ * Wiring:
+ * ADS1115 -> ESP32:
+ *   VDD -> 3.3V
+ *   GND -> GND
+ *   SCL -> GPIO22
+ *   SDA -> GPIO21
  * 
- * Publishes simulated ADXL335 accelerometer data to HiveMQ Cloud
- * Use this when you don't have a physical sensor connected
+ * ADXL335 Sensor A (Sensor 1):
+ *   Z -> ADS1115 A0
+ *   Y -> ADS1115 A1
+ *   X -> Not connected (displays 0)
  * 
- * Hardware: ESP32 (any variant)
- * Connection: USB to COM4
+ * ADXL335 Sensor B (Sensor 2):
+ *   Z -> ADS1115 A2
+ *   Y -> ADS1115 A3 (Assumed for 'Sensor 4 A4' request)
+ *   X -> Not connected (displays 0)
  * 
  * Required Libraries (install via Arduino Library Manager):
  * - PubSubClient by Nick O'Leary
  * - WiFiClientSecure (built-in with ESP32)
+ * - Adafruit ADS1X15 by Adafruit
+ * - ArduinoJson by Benoit Blanchon
  */
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
+#include <Wire.h>
+#include <Adafruit_ADS1X15.h>
 
 // ============= WIFI CONFIGURATION =============
-const char* ssid = "SLT-4G_1EE41C";
-const char* password = "OnTheWay123";
+const char* ssid = "test";
+const char* password = "12345678";
 
 // ============= HIVEMQ CLOUD CONFIGURATION =============
 const char* mqtt_server = "8102284b29c24b4eb40e06ac182d1130.s1.eu.hivemq.cloud";
@@ -67,22 +80,43 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 -----END CERTIFICATE-----
 )EOF";
 
-// ============= SIMULATION CONFIGURATION =============
+// ============= SENSOR CONFIGURATION =============
 const float SAMPLE_RATE = 50.0;  // 50 Hz sampling rate
-const float BASELINE_NOISE = 500.0;
-const float MAX_AMPLITUDE = 60000.0;
 
 // ADXL335 Specifications
-const float ZERO_G_VOLTAGE = 1.65;
-const float SENSITIVITY = 0.33;  // 330mV/g
+const float VCC = 3.3;                    // Supply voltage
+const float ZERO_G_VOLTAGE = 1.65;        // Voltage at 0g (VCC/2)
+const float SENSITIVITY = 0.33;           // 330mV/g for ADXL335
 
-// Train simulation state
-bool trainActive = false;
+// ADS1115 Configuration
+const float ADS_GAIN_VOLTAGE = 4.096;     // Using GAIN_ONE (±4.096V range)
+const float ADS_MAX_VALUE = 32767.0;      // 16-bit signed max value
+
+// ADS1115 Object
+Adafruit_ADS1115 ads;
+bool adsConnected = false;
+
+// Train detection state
+String trainPhase = "idle";
 String trainDirection = "";
 float trainSpeed = 0;
-String trainPhase = "idle";
+bool trainDetected = false;
 unsigned long trainStartTime = 0;
 unsigned long lastPublishTime = 0;
+
+// Threshold for train detection (adjust based on your setup)
+const float VIBRATION_THRESHOLD = 0.15;  // g-force threshold for train detection
+const float NOISE_THRESHOLD = 0.05;      // Below this is considered noise
+
+// Moving average for noise filtering
+#define FILTER_SAMPLES 5
+float xA_samples[FILTER_SAMPLES] = {0};
+float yA_samples[FILTER_SAMPLES] = {0};
+float zA_samples[FILTER_SAMPLES] = {0};
+float xB_samples[FILTER_SAMPLES] = {0};
+float yB_samples[FILTER_SAMPLES] = {0};
+float zB_samples[FILTER_SAMPLES] = {0};
+int sampleIndex = 0;
 
 // WiFi and MQTT clients
 WiFiClientSecure espClient;
@@ -90,80 +124,118 @@ PubSubClient client(espClient);
 
 // ============= HELPER FUNCTIONS =============
 
-float gaussianRandom(float mean, float stdev) {
-  float u1 = random(1, 10000) / 10000.0;
-  float u2 = random(1, 10000) / 10000.0;
-  float z0 = sqrt(-2.0 * log(u1)) * cos(2.0 * PI * u2);
-  return z0 * stdev + mean;
+// Convert ADS1115 raw value to voltage
+float adsToVoltage(int16_t rawValue) {
+  return (rawValue * ADS_GAIN_VOLTAGE) / ADS_MAX_VALUE;
 }
 
-float rawToVoltage(float rawValue) {
-  float gForce = rawValue / (MAX_AMPLITUDE / 3.0);
-  float voltage = ZERO_G_VOLTAGE + (gForce * SENSITIVITY);
-  return constrain(voltage, 0.0, 3.3);
+// Convert voltage to g-force for ADXL335
+float voltageToG(float voltage) {
+  return (voltage - ZERO_G_VOLTAGE) / SENSITIVITY;
 }
 
-void generateBaseline(float* x, float* y, float* z) {
-  *x = gaussianRandom(0, BASELINE_NOISE * 0.3);
-  *y = gaussianRandom(0, BASELINE_NOISE * 0.3);
-  *z = gaussianRandom(0, BASELINE_NOISE * 0.2);
+// Apply moving average filter
+float applyFilter(float newValue, float* samples) {
+  samples[sampleIndex] = newValue;
+  float sum = 0;
+  for (int i = 0; i < FILTER_SAMPLES; i++) {
+    sum += samples[i];
+  }
+  return sum / FILTER_SAMPLES;
 }
 
-void generateTrainSignal(float* x, float* y, float* z, float intensity) {
-  float t = millis() / 1000.0;
-  float amp = MAX_AMPLITUDE * intensity;
-  
-  // Multiple frequency components (60-150 Hz)
-  float f1 = 60 + random(0, 20);
-  float f2 = 120 + random(0, 30);
-  float f3 = 40 + random(0, 10);
-  
-  // Burst modulation
-  float burstFreq = 8 + random(0, 4);
-  float burstEnvelope = 0.5 + 0.5 * sin(2 * PI * burstFreq * t);
-  float randomMod = 0.7 + (random(0, 60) / 100.0);
-  
-  float signal1 = sin(2 * PI * f1 * t) * 0.5;
-  float signal2 = sin(2 * PI * f2 * t) * 0.3;
-  float signal3 = sin(2 * PI * f3 * t) * 0.2;
-  float combined = (signal1 + signal2 + signal3) * burstEnvelope * randomMod;
-  
-  float noise = gaussianRandom(0, 0.1);
-  
-  *x = (combined + noise) * amp * 0.8;
-  *y = (combined * 0.7 + gaussianRandom(0, 0.08)) * amp * 0.6;
-  *z = (abs(combined) + noise * 0.5) * amp;
-}
-
-float calculateIntensity() {
-  if (trainPhase == "idle") return 0;
-  
-  unsigned long elapsed = millis() - trainStartTime;
-  float intensity = 0;
-  
-  if (trainPhase == "approaching") {
-    float progress = min(1.0f, elapsed / 8000.0f);
-    intensity = pow(progress, 3) * 0.7;
-    if (elapsed >= 8000) {
-      trainPhase = "passing";
-      trainStartTime = millis();
-    }
-  } else if (trainPhase == "passing") {
-    intensity = 0.8 + (random(0, 20) / 100.0);
-    if (elapsed >= 4000) {
-      trainPhase = "departing";
-      trainStartTime = millis();
-    }
-  } else if (trainPhase == "departing") {
-    float progress = min(1.0f, elapsed / 6000.0f);
-    intensity = (1 - pow(progress, 0.5)) * 0.9;
-    if (elapsed >= 6000) {
-      trainPhase = "idle";
-      trainActive = false;
-    }
+// Read sensor data from ADS1115
+void readSensors(float* xA, float* yA, float* zA, float* xB, float* yB, float* zB) {
+  if (!adsConnected) {
+    // If ADS1115 not connected, return zeros
+    *xA = 0; *yA = 0; *zA = 0;
+    *xB = 0; *yB = 0; *zB = 0;
+    return;
   }
   
-  return intensity;
+  // Read all 4 channels from ADS1115
+  int16_t rawA0 = ads.readADC_SingleEnded(0);  // Sensor A - Z (A0)
+  int16_t rawA1 = ads.readADC_SingleEnded(1);  // Sensor A - Y (A1)
+  int16_t rawA2 = ads.readADC_SingleEnded(2);  // Sensor B - Z (A2)
+  int16_t rawA3 = ads.readADC_SingleEnded(3);  // Sensor B - Y (A3 assumed)
+  
+  // Convert to voltage
+  float voltA0 = adsToVoltage(rawA0);
+  float voltA1 = adsToVoltage(rawA1);
+  float voltA2 = adsToVoltage(rawA2);
+  float voltA3 = adsToVoltage(rawA3);
+  
+  // Convert to g-force
+  float rawZA = voltageToG(voltA0);  // A0 -> Z
+  float rawYA = voltageToG(voltA1);  // A1 -> Y
+  float rawZB = voltageToG(voltA2);  // A2 -> Z
+  float rawYB = voltageToG(voltA3);  // A3 -> Y
+  
+  // Apply moving average filter
+  *zA = applyFilter(rawZA, zA_samples);
+  *yA = applyFilter(rawYA, yA_samples);
+  *zB = applyFilter(rawZB, zB_samples);
+  *yB = applyFilter(rawYB, yB_samples);
+  
+  // X axis not connected - display 0
+  *xA = 0.0;
+  *xB = 0.0;
+  
+  // Update sample index for moving average
+  sampleIndex = (sampleIndex + 1) % FILTER_SAMPLES;
+}
+
+// Convert g-force to raw value for compatibility with dashboard
+float gToRaw(float gForce) {
+  // Scale g-force to match the dashboard's expected range
+  // Original simulator used values up to 60000
+  return gForce * 20000.0;
+}
+
+// Convert g-force back to voltage for display
+float gToVoltage(float gForce) {
+  return ZERO_G_VOLTAGE + (gForce * SENSITIVITY);
+}
+
+// Detect train based on vibration magnitude
+void detectTrain(float magnitudeA, float magnitudeB) {
+  float avgMagnitude = (magnitudeA + magnitudeB) / 2.0;
+  
+  static unsigned long aboveThresholdStart = 0;
+  static unsigned long belowThresholdStart = 0;
+  
+  if (avgMagnitude > VIBRATION_THRESHOLD) {
+    belowThresholdStart = 0;
+    
+    if (aboveThresholdStart == 0) {
+      aboveThresholdStart = millis();
+    }
+    
+    // Train detected after sustained vibration (500ms)
+    if (!trainDetected && (millis() - aboveThresholdStart > 500)) {
+      trainDetected = true;
+      trainPhase = "passing";
+      trainDirection = "detected";
+      trainSpeed = avgMagnitude * 100;  // Estimate speed from magnitude
+      trainStartTime = millis();
+      Serial.println(">>> TRAIN DETECTED! <<<");
+    }
+  } else if (avgMagnitude < NOISE_THRESHOLD) {
+    aboveThresholdStart = 0;
+    
+    if (trainDetected && belowThresholdStart == 0) {
+      belowThresholdStart = millis();
+    }
+    
+    // Train departed after vibration stops (1 second)
+    if (trainDetected && (millis() - belowThresholdStart > 1000)) {
+      trainDetected = false;
+      trainPhase = "idle";
+      trainDirection = "";
+      trainSpeed = 0;
+      Serial.println("Train departed.");
+    }
+  }
 }
 
 // ============= WIFI SETUP =============
@@ -194,6 +266,32 @@ void setupWiFi() {
   }
 }
 
+// ============= ADS1115 SETUP =============
+void setupADS1115() {
+  Serial.println("Initializing ADS1115...");
+  
+  Wire.begin(21, 22);  // SDA, SCL for ESP32
+  
+  if (ads.begin()) {
+    adsConnected = true;
+    Serial.println("ADS1115 connected!");
+    
+    // Set gain to GAIN_ONE for ±4.096V range
+    // This gives us good resolution for 0-3.3V ADXL335 output
+    ads.setGain(GAIN_ONE);
+    
+    Serial.println("ADS1115 configured with GAIN_ONE (±4.096V)");
+  } else {
+    adsConnected = false;
+    Serial.println("ERROR: ADS1115 not found! Check wiring:");
+    Serial.println("  - VDD to 3.3V");
+    Serial.println("  - GND to GND");
+    Serial.println("  - SDA to GPIO21");
+    Serial.println("  - SCL to GPIO22");
+    Serial.println("  - ADDR to GND (for address 0x48)");
+  }
+}
+
 // ============= MQTT CALLBACK =============
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message received [");
@@ -205,24 +303,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
     message += (char)payload[i];
   }
   Serial.println(message);
-  
-  // Handle train trigger commands
-  if (String(topic) == "trainflow/command") {
-    StaticJsonDocument<200> doc;
-    DeserializationError error = deserializeJson(doc, message);
-    
-    if (!error) {
-      String cmd = doc["command"].as<String>();
-      if (cmd == "trigger_train" && !trainActive) {
-        trainActive = true;
-        trainDirection = doc["direction"].as<String>();
-        trainSpeed = doc["speed"] | (60 + random(0, 60));
-        trainPhase = "approaching";
-        trainStartTime = millis();
-        Serial.println("Train triggered!");
-      }
-    }
-  }
 }
 
 // ============= MQTT RECONNECT =============
@@ -239,12 +319,14 @@ void reconnect() {
       client.subscribe("trainflow/command");
       
       // Publish online status
-      StaticJsonDocument<100> statusDoc;
+      StaticJsonDocument<150> statusDoc;
       statusDoc["device"] = "ESP32";
       statusDoc["status"] = "online";
       statusDoc["ip"] = WiFi.localIP().toString();
+      statusDoc["mode"] = "real_sensors";
+      statusDoc["adsConnected"] = adsConnected;
       
-      char statusBuffer[100];
+      char statusBuffer[150];
       serializeJson(statusDoc, statusBuffer);
       client.publish(topic_status, statusBuffer);
       
@@ -260,50 +342,70 @@ void reconnect() {
 // ============= PUBLISH SENSOR DATA =============
 void publishSensorData() {
   float xA, yA, zA, xB, yB, zB;
-  float intensity = calculateIntensity();
   
-  // Generate sensor data
-  if (intensity > 0.01) {
-    generateTrainSignal(&xA, &yA, &zA, intensity);
-    // Sensor B with slight delay simulation
-    generateTrainSignal(&xB, &yB, &zB, intensity * 0.95);
-  } else {
-    generateBaseline(&xA, &yA, &zA);
-    generateBaseline(&xB, &yB, &zB);
-  }
+  // Read real sensor data
+  readSensors(&xA, &yA, &zA, &xB, &yB, &zB);
   
-  float magnitudeA = sqrt(xA*xA + yA*yA + zA*zA);
-  float magnitudeB = sqrt(xB*xB + yB*yB + zB*zB);
+  // Calculate magnitude (using Z and Y, since X is 0)
+  float magnitudeA = sqrt(zA*zA + yA*yA);
+  float magnitudeB = sqrt(zB*zB + yB*yB);
+  
+  // Detect train based on vibration
+  detectTrain(magnitudeA, magnitudeB);
+  
+  // Convert g-force to raw values for dashboard compatibility
+  float rawXA = gToRaw(xA); // 0
+  float rawYA = gToRaw(yA);
+  float rawZA = gToRaw(zA);
+  float rawXB = gToRaw(xB); // 0
+  float rawYB = gToRaw(yB);
+  float rawZB = gToRaw(zB);
+  
+  float rawMagnitudeA = sqrt(rawXA*rawXA + rawYA*rawYA + rawZA*rawZA);
+  float rawMagnitudeB = sqrt(rawXB*rawXB + rawYB*rawYB + rawZB*rawZB);
   
   // Create JSON for Sensor A
-  StaticJsonDocument<300> docA;
+  StaticJsonDocument<350> docA;
   docA["timestamp"] = millis();
-  docA["x"] = xA;
-  docA["y"] = yA;
-  docA["z"] = zA;
-  docA["magnitude"] = magnitudeA;
-  JsonObject voltageA = docA.createNestedObject("voltage");
-  voltageA["x"] = rawToVoltage(xA);
-  voltageA["y"] = rawToVoltage(yA);
-  voltageA["z"] = rawToVoltage(zA);
+  docA["x"] = rawXA;  // 0
+  docA["y"] = rawYA;
+  docA["z"] = rawZA;
+  docA["magnitude"] = rawMagnitudeA;
   
-  char bufferA[300];
+  // Include g-force values for reference
+  JsonObject gForceA = docA.createNestedObject("gForce");
+  gForceA["x"] = xA;
+  gForceA["y"] = yA;
+  gForceA["z"] = zA;
+  
+  JsonObject voltageA = docA.createNestedObject("voltage");
+  voltageA["x"] = gToVoltage(xA);
+  voltageA["y"] = gToVoltage(yA);
+  voltageA["z"] = gToVoltage(zA);
+  
+  char bufferA[350];
   serializeJson(docA, bufferA);
   client.publish(topic_sensorA, bufferA);
   
   // Create JSON for Sensor B
-  StaticJsonDocument<300> docB;
+  StaticJsonDocument<350> docB;
   docB["timestamp"] = millis();
-  docB["x"] = xB;
-  docB["y"] = yB;
-  docB["z"] = zB;
-  docB["magnitude"] = magnitudeB;
-  JsonObject voltageB = docB.createNestedObject("voltage");
-  voltageB["x"] = rawToVoltage(xB);
-  voltageB["y"] = rawToVoltage(yB);
-  voltageB["z"] = rawToVoltage(zB);
+  docB["x"] = rawXB;  // 0
+  docB["y"] = rawYB;
+  docB["z"] = rawZB;
+  docB["magnitude"] = rawMagnitudeB;
   
-  char bufferB[300];
+  JsonObject gForceB = docB.createNestedObject("gForce");
+  gForceB["x"] = xB;
+  gForceB["y"] = yB;
+  gForceB["z"] = zB;
+  
+  JsonObject voltageB = docB.createNestedObject("voltage");
+  voltageB["x"] = gToVoltage(xB);
+  voltageB["y"] = gToVoltage(yB);
+  voltageB["z"] = gToVoltage(zB);
+  
+  char bufferB[350];
   serializeJson(docB, bufferB);
   client.publish(topic_sensorB, bufferB);
   
@@ -312,11 +414,25 @@ void publishSensorData() {
   stateDoc["phase"] = trainPhase;
   stateDoc["direction"] = trainDirection;
   stateDoc["speed"] = trainSpeed;
-  stateDoc["isApproaching"] = (trainPhase == "approaching");
+  stateDoc["isApproaching"] = trainDetected;
+  stateDoc["magnitudeA"] = magnitudeA;
+  stateDoc["magnitudeB"] = magnitudeB;
   
   char stateBuffer[150];
   serializeJson(stateDoc, stateBuffer);
   client.publish("trainflow/trainState", stateBuffer);
+  
+  // Debug output every second
+  static unsigned long lastDebug = 0;
+  if (millis() - lastDebug > 1000) {
+    lastDebug = millis();
+    Serial.printf("Sensor A - X: %.3fg (NC), Y: %.3fg, Z: %.3fg | Mag: %.3fg\n", xA, yA, zA, magnitudeA);
+    Serial.printf("Sensor B - X: %.3fg (NC), Y: %.3fg, Z: %.3fg | Mag: %.3fg\n", xB, yB, zB, magnitudeB);
+    Serial.printf("Train: %s | ADS1115: %s\n", 
+                  trainDetected ? "DETECTED" : "none", 
+                  adsConnected ? "OK" : "NOT FOUND");
+    Serial.println("----------------------------------------");
+  }
 }
 
 // ============= SETUP =============
@@ -326,11 +442,22 @@ void setup() {
   
   Serial.println();
   Serial.println("========================================");
-  Serial.println("  TrainFlow ESP32 Sensor Simulator");
+  Serial.println("  TrainFlow ESP32 - Real Sensors");
+  Serial.println("  ADS1115 + ADXL335 x2 (Z/Y Axis Mode)");
   Serial.println("========================================");
+  Serial.println();
+  Serial.println("Wiring Configuration:");
+  Serial.println("  ADS1115 A0 <- Sensor 1 Z-axis");
+  Serial.println("  ADS1115 A1 <- Sensor 1 Y-axis");
+  Serial.println("  ADS1115 A2 <- Sensor 2 Z-axis");
+  Serial.println("  ADS1115 A3 <- Sensor 2 Y-axis");
+  Serial.println("  X-axis: Not connected (displays 0)");
   Serial.println();
   
   randomSeed(analogRead(0));
+  
+  // Setup ADS1115
+  setupADS1115();
   
   // Setup WiFi
   setupWiFi();
@@ -341,7 +468,9 @@ void setup() {
   client.setCallback(callback);
   client.setBufferSize(512);
   
-  Serial.println("Setup complete! Starting sensor simulation...");
+  Serial.println();
+  Serial.println("Setup complete! Starting real sensor data streaming...");
+  Serial.println("========================================");
 }
 
 // ============= MAIN LOOP =============
@@ -357,17 +486,5 @@ void loop() {
   if (now - lastPublishTime >= 20) {
     lastPublishTime = now;
     publishSensorData();
-  }
-  
-  // Auto-trigger train every 30-60 seconds for demo
-  static unsigned long lastAutoTrain = 0;
-  if (!trainActive && (now - lastAutoTrain > 30000 + random(0, 30000))) {
-    lastAutoTrain = now;
-    trainActive = true;
-    trainDirection = random(0, 2) ? "left-to-right" : "right-to-left";
-    trainSpeed = 60 + random(0, 60);
-    trainPhase = "approaching";
-    trainStartTime = millis();
-    Serial.println("Auto-triggered train simulation!");
   }
 }
